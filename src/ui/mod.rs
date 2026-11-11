@@ -65,4 +65,30 @@ mod tests {
         assert!(text.contains("agtx"), "statusbar must show agtx");
         assert!(text.contains('M'), "modified file must show its symbol");
     }
+
+    #[test]
+    fn recently_changed_file_renders_a_marker() {
+        let mut app = App::new(
+            PathBuf::from("/repo"),
+            Config::default(),
+            GitState {
+                branch: Some("main".to_string()),
+                files: BTreeMap::new(),
+                additions: 0,
+                deletions: 0,
+            },
+            vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")],
+        );
+        app.mark_recent(
+            &[PathBuf::from("src/main.rs")],
+            std::time::Instant::now(),
+        );
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let buffer = terminal.backend_mut().buffer();
+        let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(text.contains('●'), "recent file must show the ● marker");
+    }
 }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -8,12 +8,15 @@ use crossterm::event::{self, Event, KeyEventKind};
 
 mod app;
 mod config;
+mod editor;
 mod git;
 mod theme;
 mod tree;
 mod ui;
+mod watch;
 
 use app::{App, AppEvent};
+use config::EditorProfile;
 
 /// Read-only terminal observer for agent-driven changes.
 #[derive(Parser)]
@@ -34,18 +37,55 @@ fn main() -> Result<()> {
     let root = git::repo_root(&args.path)?;
     let state = git::status::read(&root)?;
     let paths = git::files::visible(&root, &state)?;
+    let watcher_config = config.clone();
     let mut app = App::new(root, config, state, paths);
 
-    let mut terminal = ratatui::init();
-    // Shared with the filesystem watcher in Task 5; kept alive here.
     let (tx, rx) = mpsc::channel::<AppEvent>();
+    // Kept alive for the whole run: dropping it stops the watcher.
+    let _watcher = match watch::spawn(app.root(), &watcher_config, tx.clone()) {
+        Ok(watcher) => Some(watcher),
+        Err(err) => {
+            let _ = tx.send(AppEvent::Error(format!(
+                "filesystem watcher disabled: {err:#}"
+            )));
+            None
+        }
+    };
+
+    let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app, &tx, &rx);
     ratatui::restore();
     result
 }
 
+/// Leave the TUI, run the editor on the terminal, then always come back:
+/// the terminal is re-initialized even when the launch failed.
+fn launch_editor(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    profile: &EditorProfile,
+    path: &Path,
+) -> Result<()> {
+    ratatui::restore();
+    let launch_result = editor::launch(app.root(), profile, path, None);
+    *terminal = ratatui::init();
+    terminal.clear()?;
+    match launch_result {
+        Ok(()) => {
+            if let Err(err) = app.refresh_git().and_then(|_| app.reload_diff()) {
+                app.set_status(format!("error: {err:#}"));
+            }
+        }
+        Err(err) => app.set_status(format!("error: {err:#}")),
+    }
+    app.dirty = true;
+    terminal.draw(|frame| ui::draw(frame, app))?;
+    app.dirty = false;
+    Ok(())
+}
+
 /// Drawn only when `app.dirty`; keyboard events are routed through the
-/// channel so the watcher can share it in Task 5.
+/// channel shared with the filesystem watcher.
 fn run(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
@@ -60,6 +100,9 @@ fn run(
         }
         if app.should_quit() {
             return Ok(());
+        }
+        if let Some((profile, path)) = app.take_editor_request() {
+            launch_editor(terminal, app, &profile, &path)?;
         }
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {

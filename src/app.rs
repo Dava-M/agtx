@@ -24,10 +24,8 @@ pub enum Focus {
 pub enum AppEvent {
     Key(KeyEvent),
     Resize,
-    #[allow(dead_code)] // constructed by the filesystem watcher (Task 5)
     FsChanged(Vec<PathBuf>),
     Tick,
-    #[allow(dead_code)] // constructed by the watcher thread on failure (Task 5)
     Error(String),
 }
 
@@ -49,6 +47,8 @@ pub struct App {
     diff_viewport_height: Cell<u16>,
     status: String,
     recent: Vec<(PathBuf, Instant)>,
+    /// Set by `e`; taken by the main loop, which owns the terminal.
+    editor_request: Option<(EditorProfile, PathBuf)>,
     pub dirty: bool,
     quit: bool,
 }
@@ -70,6 +70,7 @@ impl App {
             diff_viewport_height: Cell::new(20),
             status: String::new(),
             recent: Vec::new(),
+            editor_request: None,
             dirty: true,
             quit: false,
         }
@@ -85,8 +86,12 @@ impl App {
             }
             AppEvent::Resize => self.dirty = true,
             AppEvent::FsChanged(paths) => {
-                self.mark_recent(&paths, Instant::now());
-                self.status = match self.refresh_git() {
+                let relative: Vec<PathBuf> = paths
+                    .iter()
+                    .filter_map(|path| self.repo_relative(path))
+                    .collect();
+                self.mark_recent(&relative, Instant::now());
+                self.status = match self.refresh_git().and_then(|_| self.reload_diff()) {
                     Ok(()) => "updated".to_string(),
                     Err(err) => format!("error: {err:#}"),
                 };
@@ -172,14 +177,24 @@ impl App {
             }
             KeyCode::Char('r') => self.refresh_and_reload(),
             KeyCode::Char('e') => {
-                self.status = match self.edit_target() {
-                    Some((profile, path)) => format!(
-                        "editor wired in Task 5: {} {}",
-                        profile.command.join(" "),
-                        path.display()
-                    ),
-                    None => "editor wired in Task 5 (select a file)".to_string(),
-                };
+                match self.edit_target() {
+                    Some((profile, path)) => {
+                        self.editor_request = Some((profile, path));
+                        self.status.clear();
+                    }
+                    None => {
+                        self.status = match self.tree.rows().get(self.selected_row) {
+                            Some(row) if row.is_dir => {
+                                "select a file to open in the editor".to_string()
+                            }
+                            Some(_) => format!(
+                                "editor profile `{}` is not defined",
+                                self.config.editor.default
+                            ),
+                            None => "no file selected".to_string(),
+                        };
+                    }
+                }
                 self.dirty = true;
             }
             _ => {}
@@ -291,6 +306,40 @@ impl App {
         }
         let profile = self.config.editor.profiles.get(&self.config.editor.default)?.clone();
         Some((profile, self.root.join(&row.path)))
+    }
+
+    /// Consume a pending editor launch request (set by the `e` key).
+    pub fn take_editor_request(&mut self) -> Option<(EditorProfile, PathBuf)> {
+        self.editor_request.take()
+    }
+
+    /// Report a message from the main loop, e.g. an editor launch failure.
+    pub fn set_status(&mut self, message: impl Into<String>) {
+        self.status = message.into();
+        self.dirty = true;
+    }
+
+    /// Convert a watcher path to repo-relative, dropping paths outside the
+    /// root. Watcher backends may report canonical paths, so the canonical
+    /// root is tried when the plain prefix does not match.
+    fn repo_relative(&self, path: &Path) -> Option<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        let relative = match absolute.strip_prefix(&self.root) {
+            Ok(rel) => rel.to_path_buf(),
+            Err(_) => {
+                let canonical_root = self.root.canonicalize().ok()?;
+                absolute.strip_prefix(&canonical_root).ok()?.to_path_buf()
+            }
+        };
+        if relative.as_os_str().is_empty() {
+            None
+        } else {
+            Some(relative)
+        }
     }
 
     pub fn mark_recent(&mut self, paths: &[PathBuf], now: Instant) {
@@ -753,5 +802,96 @@ mod tests {
             ]
         );
         assert!(app.dirty);
+    }
+
+    #[test]
+    fn fs_changed_marks_relative_paths_recent_and_refreshes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        git(&root, &["init", "-q"]);
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(&root, &["add", "a.txt"]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        );
+        let mut app = app_for(&root);
+
+        // While agtx runs the agent edits the file.
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside = outside_dir.path().join("x.txt");
+        std::fs::write(&outside, "x\n").unwrap();
+
+        app.handle_event(AppEvent::FsChanged(vec![
+            root.join("a.txt"),
+            // A watcher backend may report the canonical temp-dir path.
+            root.canonicalize().unwrap().join("a.txt"),
+            outside.clone(),
+        ]));
+
+        assert!(app.is_recent(Path::new("a.txt")), "repo-relative path marked recent");
+        assert!(!app.is_recent(&outside), "paths outside the root are dropped");
+        assert_eq!(app.status_message(), "updated");
+        let row = app
+            .rows()
+            .iter()
+            .find(|row| row.path == Path::new("a.txt"))
+            .expect("a.txt is visible");
+        assert!(row.status.is_some(), "refresh picked up the modification");
+    }
+
+    #[test]
+    fn prune_recent_removes_entries_older_than_ten_seconds() {
+        let mut app = test_app();
+        let now = Instant::now();
+        app.mark_recent(&[PathBuf::from("src/lib.rs")], now);
+
+        app.dirty = false;
+        app.prune_recent(now + Duration::from_secs(5));
+        assert!(app.is_recent(Path::new("src/lib.rs")));
+        assert!(!app.dirty, "pruning nothing must not set dirty");
+
+        app.prune_recent(now + Duration::from_secs(11));
+        assert!(!app.is_recent(Path::new("src/lib.rs")));
+        assert!(app.dirty, "removing an entry sets dirty");
+    }
+
+    #[test]
+    fn edit_target_returns_profile_and_absolute_path_for_files() {
+        let mut app = test_app();
+        app.handle_event(key(KeyCode::Char('G')));
+        assert_eq!(selected_path(&app), Some(PathBuf::from("a.txt")));
+
+        let (profile, path) = app.edit_target().expect("a file is selected");
+        assert_eq!(profile.command, vec!["nvim", "+{line}", "{file}"]);
+        assert_eq!(path, PathBuf::from("/repo/a.txt"));
+        assert!(app.take_editor_request().is_none(), "only the `e` key queues a launch");
+
+        app.handle_event(key(KeyCode::Char('e')));
+        let (profile, path) = app.take_editor_request().expect("`e` queues a launch");
+        assert_eq!(profile.command, vec!["nvim", "+{line}", "{file}"]);
+        assert_eq!(path, PathBuf::from("/repo/a.txt"));
+        assert!(app.take_editor_request().is_none());
+    }
+
+    #[test]
+    fn edit_target_is_none_on_a_directory_and_explains_in_status() {
+        let mut app = test_app();
+        assert_eq!(selected_path(&app), Some(PathBuf::from("src")));
+        assert!(app.edit_target().is_none());
+
+        app.handle_event(key(KeyCode::Char('e')));
+        assert!(app.take_editor_request().is_none());
+        assert!(app.status_message().contains("select a file"));
     }
 }
