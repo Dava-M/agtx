@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, Focus};
-use crate::git::diff::{DiffLine, DiffLineKind};
+use crate::git::diff::{DiffLine, DiffLineKind, ViewKind};
 
 const NO_SELECTION: &str = "Select a file and press Enter";
 const NO_CHANGES: &str = "No uncommitted changes";
@@ -24,9 +24,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         None => Paragraph::new(NO_SELECTION)
             .alignment(Alignment::Center)
             .block(block),
-        Some(view) if view.lines.is_empty() => Paragraph::new(NO_CHANGES)
-            .alignment(Alignment::Center)
-            .block(block),
+        Some(view) if view.lines.is_empty() && !view.binary => {
+            let message = match view.kind {
+                ViewKind::File => "Empty file",
+                ViewKind::Diff => NO_CHANGES,
+            };
+            Paragraph::new(message).alignment(Alignment::Center).block(block)
+        }
         Some(view) => {
             let mut lines: Vec<Line> = Vec::new();
             if view.binary {
@@ -50,11 +54,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
 fn title(app: &App) -> String {
     match app.diff() {
-        Some(view) => format!(
-            "Diff: {} [{}]",
-            view.path.display(),
-            if view.staged { "staged" } else { "worktree" }
-        ),
+        Some(view) => match view.kind {
+            ViewKind::File => format!("File: {}", view.path.display()),
+            ViewKind::Diff => format!(
+                "Diff: {} [{}]",
+                view.path.display(),
+                if view.staged { "staged" } else { "worktree" }
+            ),
+        },
         None => "Diff".to_string(),
     }
 }
@@ -112,6 +119,18 @@ mod tests {
         app
     }
 
+    fn app_with_view(view: crate::git::diff::DiffView) -> App {
+        let git = GitState {
+            branch: Some("main".to_string()),
+            files: BTreeMap::new(),
+            additions: 0,
+            deletions: 0,
+        };
+        let mut app = App::new(PathBuf::from("/repo"), Config::default(), git, Vec::new());
+        app.preload_diff(view);
+        app
+    }
+
     fn render_text(app: &App) -> String {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
@@ -160,5 +179,40 @@ mod tests {
         let app = app_with("", false);
         let rendered = render_text(&app);
         assert!(rendered.contains(NO_CHANGES), "{rendered}");
+    }
+
+    #[test]
+    fn renders_file_preview_even_without_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hello\nworld\n").unwrap();
+        let view = crate::git::diff::load_file(
+            dir.path(),
+            std::path::Path::new("a.txt"),
+            1_000,
+            100,
+        )
+        .unwrap();
+        let app = app_with_view(view);
+        let rendered = render_text(&app);
+        assert!(rendered.contains("File: a.txt"), "{rendered}");
+        assert!(rendered.contains("hello"), "{rendered}");
+        assert!(!rendered.contains(NO_CHANGES), "{rendered}");
+    }
+
+    #[test]
+    fn renders_empty_file_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("empty.txt"), "").unwrap();
+        let view = crate::git::diff::load_file(
+            dir.path(),
+            std::path::Path::new("empty.txt"),
+            1_000,
+            100,
+        )
+        .unwrap();
+        let app = app_with_view(view);
+        let rendered = render_text(&app);
+        assert!(rendered.contains("Empty file"), "{rendered}");
+        assert!(!rendered.contains(NO_CHANGES), "{rendered}");
     }
 }

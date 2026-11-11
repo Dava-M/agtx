@@ -70,6 +70,9 @@ not watched and do not appear in the tree.
 | `g` | First row |
 | `G` | Last row |
 | `Enter` | Expand/collapse a directory, open the diff of a file; in the diff pane, open the file in the editor |
+| `Shift+Enter`, `p` | Preview the selected file's contents on the right, even when it has no changes |
+| `-` | Collapse the tree to the selected file's directory chain |
+| `=` | Expand all directories |
 | `Space` | Toggle directory collapse |
 | `Tab` | Switch focus between tree and diff |
 | `Esc` | Return focus to the tree |
@@ -84,4 +87,7 @@ not watched and do not appear in the tree.
 Files changed in the last 10 seconds carry a `●` marker. The tree refreshes
 automatically after filesystem events (debounced by `refresh_debounce_ms`).
 Pressing `Enter` twice on the same file opens it in the configured editor;
-`Tab`/`Esc` returns focus to the tree.
+`Shift+Enter` (or `p`) previews the file contents, and `Tab`/`Esc` returns
+focus to the tree. Some terminals report `Shift+Enter` as plain `Enter`;
+`p` is the reliable fallback. `-` collapses everything except the selected
+file's directory chain, `=` expands all directories.
