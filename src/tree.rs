@@ -257,9 +257,37 @@ impl Tree {
         true
     }
 
-    #[allow(dead_code)] // no key bound to it in the MVP
     pub fn expand_all(&mut self) {
         self.collapsed.clear();
+        self.rebuild_rows();
+    }
+
+    /// Collapse every directory except the selected path's ancestor chain.
+    /// A directory anchor stays expanded; a file anchor keeps its parent
+    /// directory and all higher ancestors expanded.
+    pub fn collapse_to(&mut self, anchor: &Path) {
+        self.collapsed.clear();
+        let anchor_is_dir = self
+            .find(anchor)
+            .map(|idx| self.nodes[idx].is_dir)
+            .unwrap_or(false);
+        let mut keep: HashSet<PathBuf> = HashSet::new();
+        if anchor_is_dir {
+            keep.insert(anchor.to_path_buf());
+        }
+        let mut parent = anchor.parent();
+        while let Some(path) = parent {
+            if path.as_os_str().is_empty() {
+                break;
+            }
+            keep.insert(path.to_path_buf());
+            parent = path.parent();
+        }
+        for node in &self.nodes {
+            if node.is_dir && !node.path.as_os_str().is_empty() && !keep.contains(&node.path) {
+                self.collapsed.insert(node.path.clone());
+            }
+        }
         self.rebuild_rows();
     }
 
@@ -429,6 +457,28 @@ mod tests {
 
         tree.expand_all();
         assert_eq!(tree.rows().len(), 7);
+    }
+
+    #[test]
+    fn collapse_to_keeps_selected_directory_chain_open() {
+        let paths = vec![
+            PathBuf::from("src/util/mod.rs"),
+            PathBuf::from("docs/guide.md"),
+            PathBuf::from("a.txt"),
+        ];
+        let mut tree = build(paths, &BTreeMap::new());
+
+        tree.collapse_to(Path::new("src/util/mod.rs"));
+        assert_eq!(
+            row_paths(&tree),
+            vec!["docs", "src", "src/util", "src/util/mod.rs", "a.txt"]
+        );
+
+        tree.collapse_to(Path::new("src"));
+        assert_eq!(
+            row_paths(&tree),
+            vec!["docs", "src", "src/util", "a.txt"]
+        );
     }
 
     #[test]

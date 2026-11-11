@@ -5,7 +5,7 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-const HINTS: &str = "j/k move·Enter open·Space fold·f changed·s staged·r refresh·e edit·q quit";
+const HINTS: &str = "j/k·Enter diff·S-Enter/p file·- fold·f changed·s staged·r refresh·e edit·q quit";
 
 /// Bottom two lines: summary with change counts, then key hints.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {

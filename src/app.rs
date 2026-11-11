@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::config::{Config, EditorProfile};
-use crate::git::diff::{self, DiffView};
+use crate::git::diff::{self, DiffView, ViewKind};
 use crate::git::status::GitState;
 use crate::git::{files, status};
 use crate::tree::{build, Row, Tree};
@@ -111,6 +111,9 @@ impl App {
         }
         if self.focus == Focus::Diff {
             match key.code {
+                KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    self.preview_current()?
+                }
                 KeyCode::Enter => self.queue_editor(),
                 KeyCode::Tab | KeyCode::Esc => {
                     self.focus = Focus::Tree;
@@ -144,6 +147,9 @@ impl App {
                 KeyCode::Char('s') => self.toggle_staged(),
                 KeyCode::Char('r') => self.refresh_and_reload(),
                 KeyCode::Char('e') => self.queue_editor(),
+                KeyCode::Char('p') => self.preview_current()?,
+                KeyCode::Char('-') => self.collapse_to_current(),
+                KeyCode::Char('=') => self.expand_all(),
                 _ => {}
             }
             return Ok(());
@@ -155,8 +161,14 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
             KeyCode::Char('g') => self.select_first(),
             KeyCode::Char('G') => self.select_last(),
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.open_selected_preview()?
+            }
             KeyCode::Enter => self.open_selected()?,
             KeyCode::Char(' ') => self.toggle_selected_dir(),
+            KeyCode::Char('p') => self.open_selected_preview()?,
+            KeyCode::Char('-') => self.collapse_to_current(),
+            KeyCode::Char('=') => self.expand_all(),
             KeyCode::Tab => {
                 self.focus = Focus::Diff;
                 self.dirty = true;
@@ -220,15 +232,65 @@ impl App {
         Ok(())
     }
 
+    /// Load the file's current contents into the right pane, even when it
+    /// has no uncommitted changes.
+    pub fn open_selected_preview(&mut self) -> Result<()> {
+        let path = match self.tree.rows().get(self.selected_row) {
+            Some(row) if !row.is_dir => row.path.clone(),
+            _ => {
+                self.status = "select a file to preview".to_string();
+                self.dirty = true;
+                return Ok(());
+            }
+        };
+        self.preview_for(path)?;
+        self.focus = Focus::Diff;
+        self.diff_scroll = 0;
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn preview_for(&mut self, path: PathBuf) -> Result<()> {
+        let view = diff::load_file(
+            &self.root,
+            &path,
+            self.config.max_diff_bytes,
+            self.config.max_diff_lines,
+        )?;
+        self.diff = Some(view);
+        self.diff_scroll = self.diff_scroll.min(self.diff_max_scroll());
+        self.status = "file preview".to_string();
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn preview_current(&mut self) -> Result<()> {
+        let path = match self.diff.as_ref() {
+            Some(view) => view.path.clone(),
+            None => {
+                self.status = "no file to preview".to_string();
+                self.dirty = true;
+                return Ok(());
+            }
+        };
+        self.preview_for(path)?;
+        self.focus = Focus::Diff;
+        self.diff_scroll = 0;
+        Ok(())
+    }
+
     /// Reload the open diff after a git refresh or a staged toggle.
     /// A closed diff pane is a no-op; a failed load keeps the previous view
     /// and reports the error to the caller.
     pub fn reload_diff(&mut self) -> Result<()> {
-        let path = match self.diff.as_ref() {
-            Some(view) => view.path.clone(),
+        let (path, kind) = match self.diff.as_ref() {
+            Some(view) => (view.path.clone(), view.kind),
             None => return Ok(()),
         };
-        self.load_diff_for(path)
+        match kind {
+            ViewKind::File => self.preview_for(path),
+            ViewKind::Diff => self.load_diff_for(path),
+        }
     }
 
     fn load_diff_for(&mut self, path: PathBuf) -> Result<()> {
@@ -247,10 +309,20 @@ impl App {
 
     fn toggle_staged(&mut self) {
         self.show_staged = !self.show_staged;
-        self.status = match self.reload_diff() {
-            Ok(()) if self.show_staged => "showing staged changes".to_string(),
-            Ok(()) => "showing all changes".to_string(),
-            Err(err) => format!("error: {err:#}"),
+        let path = self.diff.as_ref().map(|view| view.path.clone());
+        self.status = match path {
+            Some(path) => match self.load_diff_for(path) {
+                Ok(()) if self.show_staged => "showing staged changes".to_string(),
+                Ok(()) => "showing all changes".to_string(),
+                Err(err) => format!("error: {err:#}"),
+            },
+            None => {
+                if self.show_staged {
+                    "showing staged changes".to_string()
+                } else {
+                    "showing all changes".to_string()
+                }
+            }
         };
         self.dirty = true;
     }
@@ -462,6 +534,40 @@ impl App {
             self.selected_row = idx;
         }
         self.clamp_selection();
+        self.dirty = true;
+    }
+
+    fn collapse_to_current(&mut self) {
+        let path = if self.focus == Focus::Diff {
+            self.diff.as_ref().map(|view| view.path.clone())
+        } else {
+            self.tree
+                .rows()
+                .get(self.selected_row)
+                .map(|row| row.path.clone())
+        };
+        let Some(path) = path else {
+            return;
+        };
+        self.tree.collapse_to(&path);
+        self.selected_row = self.tree.find_row(&path).unwrap_or(0);
+        self.clamp_selection();
+        self.status = "collapsed to current directory".to_string();
+        self.dirty = true;
+    }
+
+    fn expand_all(&mut self) {
+        let path = self
+            .tree
+            .rows()
+            .get(self.selected_row)
+            .map(|row| row.path.clone());
+        self.tree.expand_all();
+        if let Some(path) = path {
+            self.selected_row = self.tree.find_row(&path).unwrap_or(0);
+        }
+        self.clamp_selection();
+        self.status = "expanded all".to_string();
         self.dirty = true;
     }
 
@@ -921,5 +1027,117 @@ mod tests {
         app.handle_event(key(KeyCode::Char('e')));
         assert!(app.take_editor_request().is_none());
         assert!(app.status_message().contains("select a file"));
+    }
+
+    #[test]
+    fn shift_enter_previews_an_unchanged_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join("src/util")).unwrap();
+        std::fs::write(root.join("src/util/mod.rs"), "pub fn x() {}\n").unwrap();
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["add", "."]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        );
+        let mut app = app_for(&root);
+        // rows: src, src/util, src/util/mod.rs, a.txt
+        app.handle_event(key(KeyCode::Char('g')));
+        app.handle_event(key(KeyCode::Char('j')));
+        app.handle_event(key(KeyCode::Char('j')));
+        assert_eq!(selected_path(&app), Some(PathBuf::from("src/util/mod.rs")));
+
+        app.handle_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::SHIFT,
+        )));
+
+        assert_eq!(app.focus(), Focus::Diff);
+        let view = app.diff().expect("preview loaded");
+        assert_eq!(view.kind, ViewKind::File);
+        assert_eq!(view.path, PathBuf::from("src/util/mod.rs"));
+        assert!(view.lines.iter().any(|line| line.text.contains("pub fn x")));
+        assert_eq!(app.status_message(), "file preview");
+    }
+
+    #[test]
+    fn p_previews_and_s_switches_back_to_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["add", "a.txt"]);
+        git(
+            &root,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        );
+        let mut app = app_for(&root);
+        app.handle_event(key(KeyCode::Char('p')));
+        assert_eq!(app.diff().unwrap().kind, ViewKind::File);
+
+        app.handle_event(key(KeyCode::Char('s')));
+        assert_eq!(app.diff().unwrap().kind, ViewKind::Diff);
+    }
+
+    #[test]
+    fn minus_collapses_to_current_directory_and_equals_expands() {
+        let paths = vec![
+            PathBuf::from("src/util/mod.rs"),
+            PathBuf::from("docs/guide.md"),
+            PathBuf::from("a.txt"),
+        ];
+        let git = GitState {
+            branch: Some("main".to_string()),
+            files: BTreeMap::new(),
+            additions: 0,
+            deletions: 0,
+        };
+        let mut app = App::new(PathBuf::from("/repo"), Config::default(), git, paths);
+        // rows: docs, docs/guide.md, src, src/util, src/util/mod.rs, a.txt
+        app.handle_event(key(KeyCode::Char('g')));
+        for _ in 0..4 {
+            app.handle_event(key(KeyCode::Char('j')));
+        }
+        assert_eq!(selected_path(&app), Some(PathBuf::from("src/util/mod.rs")));
+
+        app.handle_event(key(KeyCode::Char('-')));
+        assert_eq!(
+            row_paths(&app),
+            vec!["docs", "src", "src/util", "src/util/mod.rs", "a.txt"]
+        );
+        assert_eq!(selected_path(&app), Some(PathBuf::from("src/util/mod.rs")));
+
+        app.handle_event(key(KeyCode::Char('=')));
+        assert_eq!(
+            row_paths(&app),
+            vec![
+                "docs",
+                "docs/guide.md",
+                "src",
+                "src/util",
+                "src/util/mod.rs",
+                "a.txt",
+            ]
+        );
     }
 }

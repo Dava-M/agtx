@@ -22,10 +22,17 @@ pub struct DiffLine {
     pub new_no: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewKind {
+    Diff,
+    File,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffView {
     pub path: PathBuf,
     pub staged: bool,
+    pub kind: ViewKind,
     pub lines: Vec<DiffLine>,
     pub truncated: bool,
     pub binary: bool,
@@ -139,6 +146,50 @@ fn head_exists(root: &Path) -> Result<bool> {
     Ok(out.status.success())
 }
 
+/// Load the file's current contents for a read-only preview. Binary files
+/// produce no lines; `binary` is set instead.
+pub fn load_file(
+    root: &Path,
+    rel: &Path,
+    max_bytes: usize,
+    max_lines: usize,
+) -> Result<DiffView> {
+    let path = root.join(rel);
+    let data =
+        std::fs::read(&path).with_context(|| format!("cannot read `{}`", path.display()))?;
+    let mut truncated = data.len() > max_bytes;
+    let bytes = if truncated { &data[..max_bytes] } else { &data };
+    let binary = bytes.contains(&0);
+    let text = String::from_utf8_lossy(bytes);
+    let mut raw_lines: Vec<&str> = text.lines().collect();
+    if raw_lines.len() > max_lines {
+        truncated = true;
+        raw_lines.truncate(max_lines);
+    }
+    let lines = if binary {
+        Vec::new()
+    } else {
+        raw_lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| DiffLine {
+                kind: DiffLineKind::Context,
+                text: (*line).to_string(),
+                old_no: None,
+                new_no: Some((index + 1) as u32),
+            })
+            .collect()
+    };
+    Ok(DiffView {
+        path: rel.to_path_buf(),
+        staged: false,
+        kind: ViewKind::File,
+        lines,
+        truncated,
+        binary,
+    })
+}
+
 /// Parse unified diff text into a `DiffView`.
 pub fn parse(text: &str, path: PathBuf, staged: bool, truncated: bool) -> DiffView {
     let mut lines = Vec::new();
@@ -231,6 +282,7 @@ pub fn parse(text: &str, path: PathBuf, staged: bool, truncated: bool) -> DiffVi
     DiffView {
         path,
         staged,
+        kind: ViewKind::Diff,
         lines,
         truncated,
         binary,
@@ -270,6 +322,7 @@ mod tests {
         .join("\n");
         let view = parse(&text, PathBuf::from("src/main.rs"), false, false);
         assert_eq!(view.path, Path::new("src/main.rs"));
+        assert_eq!(view.kind, ViewKind::Diff);
         assert!(!view.staged);
         assert!(!view.truncated);
         assert!(!view.binary);
@@ -363,6 +416,37 @@ mod tests {
         assert!(view.lines.is_empty());
         assert!(!view.binary);
         assert!(!view.truncated);
+    }
+
+    #[test]
+    fn load_file_previews_text_and_sets_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        let view = load_file(root, Path::new("a.txt"), 1_000, 100).unwrap();
+        assert_eq!(view.kind, ViewKind::File);
+        assert_eq!(view.path, Path::new("a.txt"));
+        assert!(!view.binary);
+        assert!(!view.truncated);
+        assert_eq!(view.lines.len(), 2);
+        assert_eq!(view.lines[1].text, "two");
+        assert_eq!(view.lines[1].new_no, Some(2));
+        assert_eq!(view.lines[1].old_no, None);
+    }
+
+    #[test]
+    fn load_file_detects_binary_and_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("bin"), [0u8, 1, 2]).unwrap();
+        let view = load_file(root, Path::new("bin"), 1_000, 100).unwrap();
+        assert!(view.binary);
+        assert!(view.lines.is_empty());
+
+        std::fs::write(root.join("big.txt"), "a\nb\nc\n").unwrap();
+        let view = load_file(root, Path::new("big.txt"), 1_000, 2).unwrap();
+        assert!(view.truncated);
+        assert_eq!(view.lines.len(), 2);
     }
 
     fn git(dir: &Path, args: &[&str]) {
