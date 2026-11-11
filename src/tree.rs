@@ -230,6 +230,7 @@ impl Tree {
         self.rebuild_rows();
     }
 
+    #[allow(dead_code)] // consumed by an incremental refresh path (not yet wired)
     pub fn update_statuses(&mut self, statuses: &BTreeMap<PathBuf, FileStatus>) {
         for node in &mut self.nodes {
             if !node.is_dir {
@@ -256,11 +257,13 @@ impl Tree {
         true
     }
 
+    #[allow(dead_code)] // no key bound to it in the MVP
     pub fn expand_all(&mut self) {
         self.collapsed.clear();
         self.rebuild_rows();
     }
 
+    #[allow(dead_code)] // no key bound to it in the MVP
     pub fn collapse_all(&mut self) {
         for node in &self.nodes {
             if node.is_dir && !node.path.as_os_str().is_empty() {
