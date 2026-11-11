@@ -5,8 +5,6 @@ use anyhow::{Context, Result};
 
 pub mod files;
 pub mod status;
-// Consumed by the diff pane (Task 4); kept warning-free until then.
-#[allow(dead_code)]
 pub mod diff;
 
 /// Resolve the repository root containing `start`.

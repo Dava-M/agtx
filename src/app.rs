@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -5,8 +6,9 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::config::{Config, EditorProfile};
-use crate::git::{files, status};
+use crate::git::diff::{self, DiffView};
 use crate::git::status::GitState;
+use crate::git::{files, status};
 use crate::tree::{build, Row, Tree};
 
 /// Which pane owns the keyboard.
@@ -41,6 +43,10 @@ pub struct App {
     focus: Focus,
     changed_only: bool,
     show_staged: bool,
+    diff: Option<DiffView>,
+    diff_scroll: usize,
+    /// Set by the diff pane during draw so paging matches the real viewport.
+    diff_viewport_height: Cell<u16>,
     status: String,
     recent: Vec<(PathBuf, Instant)>,
     pub dirty: bool,
@@ -59,6 +65,9 @@ impl App {
             focus: Focus::Tree,
             changed_only: false,
             show_staged: false,
+            diff: None,
+            diff_scroll: 0,
+            diff_viewport_height: Cell::new(20),
             status: String::new(),
             recent: Vec::new(),
             dirty: true,
@@ -96,12 +105,38 @@ impl App {
             return Ok(());
         }
         if self.focus == Focus::Diff {
-            // Task 4 owns diff keys; Enter/Tab/Esc hand focus back to the tree.
             match key.code {
                 KeyCode::Enter | KeyCode::Tab | KeyCode::Esc => {
                     self.focus = Focus::Tree;
                     self.dirty = true;
                 }
+                KeyCode::Char('q') => self.quit = true,
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.quit = true;
+                }
+                KeyCode::Char('j') | KeyCode::Down => self.scroll_diff(1),
+                KeyCode::Char('k') | KeyCode::Up => self.scroll_diff(-1),
+                KeyCode::PageDown => {
+                    let page = self.diff_viewport_height().max(1) as isize;
+                    self.scroll_diff(page);
+                }
+                KeyCode::PageUp => {
+                    let page = self.diff_viewport_height().max(1) as isize;
+                    self.scroll_diff(-page);
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.scroll_diff(10);
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.scroll_diff(-10);
+                }
+                KeyCode::Home => self.scroll_diff_to(0),
+                KeyCode::End => {
+                    let end = self.diff_max_scroll();
+                    self.scroll_diff_to(end);
+                }
+                KeyCode::Char('s') => self.toggle_staged(),
+                KeyCode::Char('r') => self.refresh_and_reload(),
                 _ => {}
             }
             return Ok(());
@@ -123,15 +158,7 @@ impl App {
                 self.focus = Focus::Tree;
                 self.dirty = true;
             }
-            KeyCode::Char('s') => {
-                self.show_staged = !self.show_staged;
-                self.status = if self.show_staged {
-                    "showing staged changes".to_string()
-                } else {
-                    "showing all changes".to_string()
-                };
-                self.dirty = true;
-            }
+            KeyCode::Char('s') => self.toggle_staged(),
             KeyCode::Char('f') => {
                 self.changed_only = !self.changed_only;
                 self.tree.set_changed_only(self.changed_only);
@@ -143,13 +170,7 @@ impl App {
                 };
                 self.dirty = true;
             }
-            KeyCode::Char('r') => {
-                self.status = match self.refresh_git() {
-                    Ok(()) => "updated".to_string(),
-                    Err(err) => format!("error: {err:#}"),
-                };
-                self.dirty = true;
-            }
+            KeyCode::Char('r') => self.refresh_and_reload(),
             KeyCode::Char('e') => {
                 self.status = match self.edit_target() {
                     Some((profile, path)) => format!(
@@ -189,17 +210,78 @@ impl App {
         Ok(())
     }
 
+    /// Load the diff for the selected file into the right pane.
     pub fn open_selected_diff(&mut self) -> Result<()> {
-        self.status = "diff pane not implemented yet (Task 4)".to_string();
+        let path = match self.tree.rows().get(self.selected_row) {
+            Some(row) if !row.is_dir => row.path.clone(),
+            _ => return Ok(()),
+        };
+        self.load_diff_for(path)?;
+        self.focus = Focus::Diff;
+        self.diff_scroll = 0;
         self.dirty = true;
         Ok(())
     }
 
-    #[allow(dead_code)] // wired to the diff pane in Task 4
+    /// Reload the open diff after a git refresh or a staged toggle.
+    /// A closed diff pane is a no-op; a failed load keeps the previous view
+    /// and reports the error to the caller.
     pub fn reload_diff(&mut self) -> Result<()> {
-        self.status = "diff pane not implemented yet (Task 4)".to_string();
+        let path = match self.diff.as_ref() {
+            Some(view) => view.path.clone(),
+            None => return Ok(()),
+        };
+        self.load_diff_for(path)
+    }
+
+    fn load_diff_for(&mut self, path: PathBuf) -> Result<()> {
+        let view = diff::load(
+            &self.root,
+            &path,
+            self.show_staged,
+            self.config.max_diff_bytes,
+            self.config.max_diff_lines,
+        )?;
+        self.diff = Some(view);
+        self.diff_scroll = self.diff_scroll.min(self.diff_max_scroll());
         self.dirty = true;
         Ok(())
+    }
+
+    fn toggle_staged(&mut self) {
+        self.show_staged = !self.show_staged;
+        self.status = match self.reload_diff() {
+            Ok(()) if self.show_staged => "showing staged changes".to_string(),
+            Ok(()) => "showing all changes".to_string(),
+            Err(err) => format!("error: {err:#}"),
+        };
+        self.dirty = true;
+    }
+
+    fn refresh_and_reload(&mut self) {
+        self.status = match self.refresh_git().and_then(|_| self.reload_diff()) {
+            Ok(()) => "updated".to_string(),
+            Err(err) => format!("error: {err:#}"),
+        };
+        self.dirty = true;
+    }
+
+    fn diff_max_scroll(&self) -> usize {
+        let len = self.diff.as_ref().map(|view| view.lines.len()).unwrap_or(0);
+        len.saturating_sub(self.diff_viewport_height().max(1) as usize)
+    }
+
+    fn scroll_diff(&mut self, delta: isize) {
+        let next = (self.diff_scroll as isize + delta).clamp(0, self.diff_max_scroll() as isize);
+        self.scroll_diff_to(next as usize);
+    }
+
+    fn scroll_diff_to(&mut self, pos: usize) {
+        let next = pos.min(self.diff_max_scroll());
+        if next != self.diff_scroll {
+            self.diff_scroll = next;
+            self.dirty = true;
+        }
     }
 
     pub fn edit_target(&self) -> Option<(EditorProfile, PathBuf)> {
@@ -262,6 +344,32 @@ impl App {
 
     pub fn status_message(&self) -> &str {
         &self.status
+    }
+
+    pub fn diff(&self) -> Option<&DiffView> {
+        self.diff.as_ref()
+    }
+
+    pub fn diff_scroll(&self) -> usize {
+        self.diff_scroll
+    }
+
+    pub fn diff_viewport_height(&self) -> u16 {
+        self.diff_viewport_height.get()
+    }
+
+    /// Called by the diff pane on every draw so paging follows the real height.
+    pub fn set_diff_viewport_height(&self, height: u16) {
+        self.diff_viewport_height.set(height.max(1));
+    }
+
+    /// Preload a parsed view; used by tests that cannot run git.
+    #[cfg(test)]
+    pub(crate) fn preload_diff(&mut self, view: DiffView) {
+        self.diff = Some(view);
+        self.focus = Focus::Diff;
+        self.diff_scroll = 0;
+        self.dirty = true;
     }
 
     fn open_selected(&mut self) -> Result<()> {
@@ -327,6 +435,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    use crate::git::diff::DiffLineKind;
     use crate::git::status::{FileStatus, StatusKind};
 
     fn key(code: KeyCode) -> AppEvent {
@@ -436,15 +545,113 @@ mod tests {
         assert_eq!(row_paths(&app).len(), 5);
     }
 
+    /// A repo with a committed `a.txt`, a staged edit (`two`) and a further
+    /// unstaged edit (`three`), so worktree and staged diffs differ.
+    fn staged_and_worktree_changes() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        git(&root, &["init", "-q"]);
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(&root, &["add", "a.txt"]);
+        git(
+            &root,
+            &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"],
+        );
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        git(&root, &["add", "a.txt"]);
+        std::fs::write(root.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        (dir, root)
+    }
+
+    fn app_for(root: &Path) -> App {
+        let state = status::read(root).unwrap();
+        let paths = files::visible(root, &state).unwrap();
+        App::new(root.to_path_buf(), Config::default(), state, paths)
+    }
+
     #[test]
-    fn enter_on_file_reports_not_implemented() {
-        let mut app = test_app();
-        app.handle_event(key(KeyCode::Char('j')));
-        app.handle_event(key(KeyCode::Char('j')));
-        app.handle_event(key(KeyCode::Char('j')));
-        assert_eq!(selected_path(&app), Some(PathBuf::from("src/lib.rs")));
+    fn enter_on_file_opens_diff_and_focuses_the_pane() {
+        let (_dir, root) = staged_and_worktree_changes();
+        let mut app = app_for(&root);
+        assert_eq!(selected_path(&app), Some(PathBuf::from("a.txt")));
+
         app.handle_event(key(KeyCode::Enter));
-        assert!(app.status_message().contains("not implemented"));
+
+        assert_eq!(app.focus(), Focus::Diff);
+        assert_eq!(app.diff_scroll(), 0);
+        let view = app.diff().expect("diff must be loaded");
+        assert_eq!(view.path, PathBuf::from("a.txt"));
+        assert!(!view.staged);
+        assert!(view
+            .lines
+            .iter()
+            .any(|line| line.kind == DiffLineKind::Add && line.text.contains("three")));
+        assert!(app.status_message().is_empty());
+    }
+
+    #[test]
+    fn s_toggles_staged_and_reloads_the_open_diff() {
+        let (_dir, root) = staged_and_worktree_changes();
+        let mut app = app_for(&root);
+        app.open_selected_diff().unwrap();
+        assert!(!app.diff().unwrap().staged);
+        assert!(app.diff().unwrap().lines.iter().any(|l| l.text.contains("three")));
+
+        app.handle_event(key(KeyCode::Char('s')));
+        let view = app.diff().unwrap();
+        assert!(view.staged, "diff reloaded with the staged flag");
+        assert!(view.lines.iter().any(|l| l.text.contains("two")));
+        assert!(
+            !view.lines.iter().any(|l| l.text.contains("three")),
+            "staged-only diff hides the worktree edit"
+        );
+        assert!(app.status_message().contains("staged"));
+
+        app.handle_event(key(KeyCode::Char('s')));
+        let view = app.diff().unwrap();
+        assert!(!view.staged);
+        assert!(view.lines.iter().any(|l| l.text.contains("three")));
+
+        app.handle_event(key(KeyCode::Enter));
+        assert_eq!(app.focus(), Focus::Tree, "Enter in the diff pane returns to the tree");
+    }
+
+    #[test]
+    fn diff_scrolling_clamps_to_both_ends() {
+        let mut app = test_app();
+        let body: Vec<String> = (1..=60).map(|i| format!("+line {i}")).collect();
+        let text = format!("diff --git a/f b/f\n@@ -1 +1,60 @@\n{}", body.join("\n"));
+        app.preload_diff(crate::git::diff::parse(
+            &text,
+            PathBuf::from("f"),
+            false,
+            false,
+        ));
+        app.set_diff_viewport_height(10);
+        assert_eq!(app.diff().unwrap().lines.len(), 62);
+
+        app.handle_event(key(KeyCode::PageDown));
+        app.handle_event(key(KeyCode::PageDown));
+        assert_eq!(app.diff_scroll(), 20);
+
+        app.handle_event(key(KeyCode::End));
+        assert_eq!(app.diff_scroll(), 52);
+        app.handle_event(key(KeyCode::PageDown));
+        assert_eq!(app.diff_scroll(), 52, "clamped at the end");
+
+        app.handle_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(app.diff_scroll(), 42);
+
+        app.handle_event(key(KeyCode::Home));
+        assert_eq!(app.diff_scroll(), 0);
+        app.handle_event(AppEvent::Key(KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL,
+        )));
+        assert_eq!(app.diff_scroll(), 0, "clamped at the top");
     }
 
     #[test]

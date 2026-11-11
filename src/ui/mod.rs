@@ -1,14 +1,11 @@
-use ratatui::layout::{Alignment, Constraint, Layout};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::layout::{Constraint, Layout};
 use ratatui::Frame;
 
-use crate::app::{App, Focus};
+use crate::app::App;
 
+pub mod diff_pane;
 pub mod statusbar;
 pub mod tree_pane;
-
-const DIFF_PLACEHOLDER: &str = "Select a file and press Enter";
 
 /// Vertical: [tree | diff, statusbar]; the main area splits 45/55.
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -17,20 +14,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let panes = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(chunks[0]);
     tree_pane::render(frame, panes[0], app);
-    let border_style = if app.focus() == Focus::Diff {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default()
-    };
-    let placeholder = Paragraph::new(DIFF_PLACEHOLDER)
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Diff")
-                .border_style(border_style),
-        );
-    frame.render_widget(placeholder, panes[1]);
+    diff_pane::render(frame, panes[1], app);
     statusbar::render(frame, chunks[1], app);
 }
 
