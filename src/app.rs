@@ -111,7 +111,8 @@ impl App {
         }
         if self.focus == Focus::Diff {
             match key.code {
-                KeyCode::Enter | KeyCode::Tab | KeyCode::Esc => {
+                KeyCode::Enter => self.queue_editor(),
+                KeyCode::Tab | KeyCode::Esc => {
                     self.focus = Focus::Tree;
                     self.dirty = true;
                 }
@@ -142,6 +143,7 @@ impl App {
                 }
                 KeyCode::Char('s') => self.toggle_staged(),
                 KeyCode::Char('r') => self.refresh_and_reload(),
+                KeyCode::Char('e') => self.queue_editor(),
                 _ => {}
             }
             return Ok(());
@@ -176,27 +178,7 @@ impl App {
                 self.dirty = true;
             }
             KeyCode::Char('r') => self.refresh_and_reload(),
-            KeyCode::Char('e') => {
-                match self.edit_target() {
-                    Some((profile, path)) => {
-                        self.editor_request = Some((profile, path));
-                        self.status.clear();
-                    }
-                    None => {
-                        self.status = match self.tree.rows().get(self.selected_row) {
-                            Some(row) if row.is_dir => {
-                                "select a file to open in the editor".to_string()
-                            }
-                            Some(_) => format!(
-                                "editor profile `{}` is not defined",
-                                self.config.editor.default
-                            ),
-                            None => "no file selected".to_string(),
-                        };
-                    }
-                }
-                self.dirty = true;
-            }
+            KeyCode::Char('e') => self.queue_editor(),
             _ => {}
         }
         Ok(())
@@ -300,12 +282,50 @@ impl App {
     }
 
     pub fn edit_target(&self) -> Option<(EditorProfile, PathBuf)> {
-        let row = self.tree.rows().get(self.selected_row)?;
-        if row.is_dir {
-            return None;
+        let relative = if self.focus == Focus::Diff {
+            self.diff.as_ref()?.path.clone()
+        } else {
+            let row = self.tree.rows().get(self.selected_row)?;
+            if row.is_dir {
+                return None;
+            }
+            row.path.clone()
+        };
+        let profile = self
+            .config
+            .editor
+            .profiles
+            .get(&self.config.editor.default)?
+            .clone();
+        Some((profile, self.root.join(relative)))
+    }
+
+    /// Queue an editor launch for the selected file, or for the file whose
+    /// diff is open when the diff pane has focus.
+    fn queue_editor(&mut self) {
+        match self.edit_target() {
+            Some((profile, path)) => {
+                self.editor_request = Some((profile, path));
+                self.status.clear();
+            }
+            None => {
+                self.status = if self.focus == Focus::Diff {
+                    "no diff open".to_string()
+                } else {
+                    match self.tree.rows().get(self.selected_row) {
+                        Some(row) if row.is_dir => {
+                            "select a file to open in the editor".to_string()
+                        }
+                        Some(_) => format!(
+                            "editor profile `{}` is not defined",
+                            self.config.editor.default
+                        ),
+                        None => "no file selected".to_string(),
+                    }
+                };
+            }
         }
-        let profile = self.config.editor.profiles.get(&self.config.editor.default)?.clone();
-        Some((profile, self.root.join(&row.path)))
+        self.dirty = true;
     }
 
     /// Consume a pending editor launch request (set by the `e` key).
@@ -662,7 +682,15 @@ mod tests {
         assert!(view.lines.iter().any(|l| l.text.contains("three")));
 
         app.handle_event(key(KeyCode::Enter));
-        assert_eq!(app.focus(), Focus::Tree, "Enter in the diff pane returns to the tree");
+        assert_eq!(app.focus(), Focus::Diff, "Enter in the diff pane keeps focus");
+        let (profile, path) = app
+            .take_editor_request()
+            .expect("Enter in the diff pane queues the editor");
+        assert_eq!(profile.command, vec!["nvim", "+{line}", "{file}"]);
+        assert_eq!(path, root.join("a.txt"));
+
+        app.handle_event(key(KeyCode::Tab));
+        assert_eq!(app.focus(), Focus::Tree, "Tab returns to the tree");
     }
 
     #[test]

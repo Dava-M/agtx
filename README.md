@@ -69,7 +69,7 @@ not watched and do not appear in the tree.
 | `k`, `Up` | Move up |
 | `g` | First row |
 | `G` | Last row |
-| `Enter` | Expand/collapse a directory, or open the diff of a file |
+| `Enter` | Expand/collapse a directory, open the diff of a file; in the diff pane, open the file in the editor |
 | `Space` | Toggle directory collapse |
 | `Tab` | Switch focus between tree and diff |
 | `Esc` | Return focus to the tree |
@@ -83,3 +83,5 @@ not watched and do not appear in the tree.
 
 Files changed in the last 10 seconds carry a `●` marker. The tree refreshes
 automatically after filesystem events (debounced by `refresh_debounce_ms`).
+Pressing `Enter` twice on the same file opens it in the configured editor;
+`Tab`/`Esc` returns focus to the tree.
