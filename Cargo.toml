@@ -2,6 +2,12 @@
 name = "agtx"
 version = "0.1.0"
 edition = "2021"
+description = "A lightweight, read-only terminal observer for agent-driven changes"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Dava-M/agtx"
+keywords = ["git", "tui", "diff", "terminal", "watcher"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 ratatui = "0.29"

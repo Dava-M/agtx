@@ -1,5 +1,8 @@
 # agtx
 
+[![CI](https://github.com/Dava-M/agtx/actions/workflows/ci.yml/badge.svg)](https://github.com/Dava-M/agtx/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 `agtx` is a lightweight, read-only terminal observer for agent-driven changes.
 It shows the repository tree with git status colors, the uncommitted diff of the
 selected file, and refreshes itself as files change on disk.
@@ -14,6 +17,12 @@ cargo build --release
 ```
 
 The binary is `target/release/agtx`.
+
+To install it into `~/.cargo/bin`:
+
+```sh
+cargo install --path .
+```
 
 ## Run
 
@@ -91,3 +100,11 @@ Pressing `Enter` twice on the same file opens it in the configured editor;
 focus to the tree. Some terminals report `Shift+Enter` as plain `Enter`;
 `p` is the reliable fallback. `-` collapses everything except the selected
 file's directory chain, `=` expands all directories.
+
+## Origin
+
+This project was fully created by Claude Code running on DeepSeek.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
