@@ -34,8 +34,8 @@ pub fn visible(root: &Path, status: &GitState) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use crate::git::status::{FileStatus, StatusKind};
+    use std::collections::BTreeMap;
 
     fn git(dir: &Path, args: &[&str]) {
         let out = std::process::Command::new("git")
@@ -78,7 +78,16 @@ mod tests {
         git(root, &["add", "a.txt", "b.txt", "sub/c.txt"]);
         git(
             root,
-            &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
         );
         // An untracked file appears via ls-files -o; a staged deletion does
         // not appear anywhere and must come in through the status union.
@@ -86,7 +95,10 @@ mod tests {
         std::fs::remove_file(root.join("b.txt")).unwrap();
 
         let mut files = BTreeMap::new();
-        files.insert(PathBuf::from("b.txt"), status_entry("b.txt", StatusKind::Deleted, 'D', '.'));
+        files.insert(
+            PathBuf::from("b.txt"),
+            status_entry("b.txt", StatusKind::Deleted, 'D', '.'),
+        );
         let state = GitState {
             branch: Some("main".to_string()),
             files,

@@ -109,26 +109,24 @@ pub fn load(path: Option<&Path>) -> Result<Config> {
                 .with_context(|| format!("cannot read config file `{}`", path.display()))?;
             let config: Config = toml::from_str(&text)
                 .with_context(|| format!("cannot parse config file `{}`", path.display()))?;
-            validate(&config).with_context(|| {
-                format!("invalid config file `{}`", path.display())
-            })?;
+            validate(&config)
+                .with_context(|| format!("invalid config file `{}`", path.display()))?;
             Ok(config)
         }
         None => {
             let path = default_path()?;
             match fs::read_to_string(&path) {
                 Ok(text) => {
-                    let config: Config = toml::from_str(&text)
-                        .with_context(|| format!("cannot parse config file `{}`", path.display()))?;
-                    validate(&config).with_context(|| {
-                        format!("invalid config file `{}`", path.display())
+                    let config: Config = toml::from_str(&text).with_context(|| {
+                        format!("cannot parse config file `{}`", path.display())
                     })?;
+                    validate(&config)
+                        .with_context(|| format!("invalid config file `{}`", path.display()))?;
                     Ok(config)
                 }
                 Err(err) if err.kind() == ErrorKind::NotFound => Ok(Config::default()),
-                Err(err) => Err(err).with_context(|| {
-                    format!("cannot read config file `{}`", path.display())
-                }),
+                Err(err) => Err(err)
+                    .with_context(|| format!("cannot read config file `{}`", path.display())),
             }
         }
     }
@@ -257,7 +255,11 @@ command = ["nvim", "+{line}", "{file}"]
     #[test]
     fn malformed_toml_is_error_with_context() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_config(dir.path(), "malformed.toml", "refresh_debounce_ms = [1, 2\n");
+        let path = write_config(
+            dir.path(),
+            "malformed.toml",
+            "refresh_debounce_ms = [1, 2\n",
+        );
         let err = load(Some(&path)).unwrap_err();
         let err = format!("{err:#}");
         assert!(

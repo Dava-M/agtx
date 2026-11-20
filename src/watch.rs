@@ -30,7 +30,11 @@ pub fn should_ignore(path: &Path, root: &Path, ignore_dirs: &[String]) -> bool {
         }
     }
 
-    if path.file_name().map(|name| name == ".DS_Store").unwrap_or(false) {
+    if path
+        .file_name()
+        .map(|name| name == ".DS_Store")
+        .unwrap_or(false)
+    {
         return true;
     }
 
@@ -62,42 +66,41 @@ pub fn spawn(
     // Coalesce bursts: collect until no event has arrived for `debounce`,
     // then deduplicate and hand one batch to the UI.
     let event_tx = tx.clone();
-    thread::spawn(move || loop {
-        let mut pending = match batch_rx.recv() {
-            Ok(paths) => paths,
-            Err(_) => break,
-        };
-        let mut deadline = Instant::now() + debounce;
-        let mut connected = true;
-        loop {
-            let now = Instant::now();
-            if now >= deadline {
-                break;
-            }
-            match batch_rx.recv_timeout(deadline - now) {
-                Ok(paths) => {
-                    pending.extend(paths);
-                    deadline = Instant::now() + debounce;
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => break,
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    connected = false;
+    thread::spawn(move || {
+        while let Ok(first) = batch_rx.recv() {
+            let mut pending = first;
+            let mut deadline = Instant::now() + debounce;
+            let mut connected = true;
+            loop {
+                let now = Instant::now();
+                if now >= deadline {
                     break;
                 }
+                match batch_rx.recv_timeout(deadline - now) {
+                    Ok(paths) => {
+                        pending.extend(paths);
+                        deadline = Instant::now() + debounce;
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        connected = false;
+                        break;
+                    }
+                }
             }
-        }
-        let mut seen = BTreeSet::new();
-        pending.retain(|path| seen.insert(path.clone()));
-        if !pending.is_empty() && event_tx.send(AppEvent::FsChanged(pending)).is_err() {
-            break;
-        }
-        if !connected {
-            break;
+            let mut seen = BTreeSet::new();
+            pending.retain(|path| seen.insert(path.clone()));
+            if !pending.is_empty() && event_tx.send(AppEvent::FsChanged(pending)).is_err() {
+                break;
+            }
+            if !connected {
+                break;
+            }
         }
     });
 
-    let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
-        match result {
+    let mut watcher =
+        notify::recommended_watcher(move |result: notify::Result<Event>| match result {
             Ok(event) => {
                 if matches!(event.kind, notify::EventKind::Access(_)) {
                     return;
@@ -114,9 +117,8 @@ pub fn spawn(
             Err(err) => {
                 let _ = tx.send(AppEvent::Error(format!("watcher error: {err}")));
             }
-        }
-    })
-    .context("cannot create filesystem watcher")?;
+        })
+        .context("cannot create filesystem watcher")?;
 
     watcher
         .watch(root, RecursiveMode::Recursive)
@@ -143,11 +145,27 @@ mod tests {
         let ignored = ignore_dirs();
 
         assert!(should_ignore(Path::new("/repo/.git/index"), root, &ignored));
-        assert!(should_ignore(Path::new("/repo/target/debug/x"), root, &ignored));
-        assert!(should_ignore(Path::new("/repo/node_modules/a"), root, &ignored));
+        assert!(should_ignore(
+            Path::new("/repo/target/debug/x"),
+            root,
+            &ignored
+        ));
+        assert!(should_ignore(
+            Path::new("/repo/node_modules/a"),
+            root,
+            &ignored
+        ));
         assert!(should_ignore(Path::new("/repo/.DS_Store"), root, &ignored));
-        assert!(should_ignore(Path::new("/repo/src/main.rs.swp"), root, &ignored));
-        assert!(!should_ignore(Path::new("/repo/src/main.rs"), root, &ignored));
+        assert!(should_ignore(
+            Path::new("/repo/src/main.rs.swp"),
+            root,
+            &ignored
+        ));
+        assert!(!should_ignore(
+            Path::new("/repo/src/main.rs"),
+            root,
+            &ignored
+        ));
     }
 
     #[test]
@@ -155,8 +173,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let (tx, rx) = mpsc::channel();
-        let mut config = Config::default();
-        config.refresh_debounce_ms = 50;
+        let config = Config {
+            refresh_debounce_ms: 50,
+            ..Config::default()
+        };
         let _watcher = spawn(&root, &config, tx).unwrap();
 
         std::fs::write(root.join("watched.txt"), "hello\n").unwrap();

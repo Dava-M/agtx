@@ -29,7 +29,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 ViewKind::File => "Empty file",
                 ViewKind::Diff => NO_CHANGES,
             };
-            Paragraph::new(message).alignment(Alignment::Center).block(block)
+            Paragraph::new(message)
+                .alignment(Alignment::Center)
+                .block(block)
         }
         Some(view) => {
             let mut lines: Vec<Line> = Vec::new();
@@ -37,7 +39,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                 lines.push(Line::styled("binary file", style_for(DiffLineKind::Meta)));
             }
             if view.truncated {
-                lines.push(Line::styled("diff truncated", style_for(DiffLineKind::Meta)));
+                lines.push(Line::styled(
+                    "diff truncated",
+                    style_for(DiffLineKind::Meta),
+                ));
             }
             lines.extend(
                 view.lines
@@ -159,11 +164,20 @@ mod tests {
         let app = app_with(&text, false);
         let rendered = render_text(&app);
 
-        assert!(rendered.contains("src/main.rs"), "path in title: {rendered}");
-        assert!(rendered.contains("[worktree]"), "worktree marker: {rendered}");
+        assert!(
+            rendered.contains("src/main.rs"),
+            "path in title: {rendered}"
+        );
+        assert!(
+            rendered.contains("[worktree]"),
+            "worktree marker: {rendered}"
+        );
         assert!(rendered.contains("+new line"), "added line: {rendered}");
         assert!(rendered.contains("-old line"), "deleted line: {rendered}");
-        assert!(rendered.contains("@@ -1,2 +1,2 @@"), "hunk header: {rendered}");
+        assert!(
+            rendered.contains("@@ -1,2 +1,2 @@"),
+            "hunk header: {rendered}"
+        );
     }
 
     #[test]
@@ -185,13 +199,9 @@ mod tests {
     fn renders_file_preview_even_without_changes() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), "hello\nworld\n").unwrap();
-        let view = crate::git::diff::load_file(
-            dir.path(),
-            std::path::Path::new("a.txt"),
-            1_000,
-            100,
-        )
-        .unwrap();
+        let view =
+            crate::git::diff::load_file(dir.path(), std::path::Path::new("a.txt"), 1_000, 100)
+                .unwrap();
         let app = app_with_view(view);
         let rendered = render_text(&app);
         assert!(rendered.contains("File: a.txt"), "{rendered}");
@@ -203,13 +213,9 @@ mod tests {
     fn renders_empty_file_notice() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("empty.txt"), "").unwrap();
-        let view = crate::git::diff::load_file(
-            dir.path(),
-            std::path::Path::new("empty.txt"),
-            1_000,
-            100,
-        )
-        .unwrap();
+        let view =
+            crate::git::diff::load_file(dir.path(), std::path::Path::new("empty.txt"), 1_000, 100)
+                .unwrap();
         let app = app_with_view(view);
         let rendered = render_text(&app);
         assert!(rendered.contains("Empty file"), "{rendered}");

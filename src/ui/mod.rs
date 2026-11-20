@@ -9,8 +9,7 @@ pub mod tree_pane;
 
 /// Vertical: [tree | diff, statusbar]; the main area splits 45/55.
 pub fn draw(frame: &mut Frame, app: &App) {
-    let chunks =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(frame.area());
+    let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(frame.area());
     let panes = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(chunks[0]);
     tree_pane::render(frame, panes[0], app);
@@ -79,10 +78,7 @@ mod tests {
             },
             vec![PathBuf::from("src/main.rs"), PathBuf::from("README.md")],
         );
-        app.mark_recent(
-            &[PathBuf::from("src/main.rs")],
-            std::time::Instant::now(),
-        );
+        app.mark_recent(&[PathBuf::from("src/main.rs")], std::time::Instant::now());
 
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();

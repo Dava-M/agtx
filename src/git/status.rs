@@ -19,8 +19,8 @@ pub enum StatusKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileStatus {
-    pub path: PathBuf, // repo-relative
-    pub index: char,   // '.', 'M', 'A', 'D', 'R', 'C', 'U'
+    pub path: PathBuf,  // repo-relative
+    pub index: char,    // '.', 'M', 'A', 'D', 'R', 'C', 'U'
     pub worktree: char, // '.', 'M', 'D', 'U'
     pub kind: StatusKind,
     pub orig_path: Option<PathBuf>,
@@ -60,7 +60,9 @@ pub fn parse_status(input: &[u8]) -> Result<(Option<String>, BTreeMap<PathBuf, F
             }
             b'1' if token.len() > 1 && token[1] == b' ' => {
                 let Some(f) = fields(token, 9) else { continue };
-                let Some((index, worktree)) = xy(f[1]) else { continue };
+                let Some((index, worktree)) = xy(f[1]) else {
+                    continue;
+                };
                 let path = path_from_bytes(f[8]);
                 files.insert(
                     path.clone(),
@@ -76,7 +78,9 @@ pub fn parse_status(input: &[u8]) -> Result<(Option<String>, BTreeMap<PathBuf, F
             }
             b'2' if token.len() > 1 && token[1] == b' ' => {
                 let Some(f) = fields(token, 10) else { continue };
-                let Some((index, worktree)) = xy(f[1]) else { continue };
+                let Some((index, worktree)) = xy(f[1]) else {
+                    continue;
+                };
                 if i >= tokens.len() {
                     continue;
                 }
@@ -97,7 +101,9 @@ pub fn parse_status(input: &[u8]) -> Result<(Option<String>, BTreeMap<PathBuf, F
             }
             b'u' if token.len() > 1 && token[1] == b' ' => {
                 let Some(f) = fields(token, 9) else { continue };
-                let Some((index, worktree)) = xy(f[1]) else { continue };
+                let Some((index, worktree)) = xy(f[1]) else {
+                    continue;
+                };
                 let path = path_from_bytes(f[8]);
                 files.insert(
                     path.clone(),
@@ -326,7 +332,8 @@ mod tests {
         record.extend_from_slice(b"\xff\xfe na\xc3\xafve.txt");
         let input = bytes(&[&record]);
         let (_branch, files) = parse_status(&input).unwrap();
-        let expected = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"\xff\xfe na\xc3\xafve.txt"));
+        let expected =
+            std::path::PathBuf::from(std::ffi::OsStr::from_bytes(b"\xff\xfe na\xc3\xafve.txt"));
         let st = files.get(&expected).expect("non-UTF8 path must be a key");
         assert_eq!(st.kind, StatusKind::Modified);
     }
@@ -338,19 +345,44 @@ mod tests {
         let root = dir.path();
         git(root, &["init", "-q"]);
         std::fs::write(root.join("a.txt"), "one\n").unwrap();
-        git(root, &["-c", "user.name=T", "-c", "user.email=t@example.com", "add", "a.txt"]);
         git(
             root,
-            &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "add",
+                "a.txt",
+            ],
+        );
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
         );
         std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::write(root.join("b.txt"), "untracked\n").unwrap();
 
         let state = read(root).unwrap();
-        let a = state.files.get(Path::new("a.txt")).expect("a.txt must be seen");
+        let a = state
+            .files
+            .get(Path::new("a.txt"))
+            .expect("a.txt must be seen");
         assert_eq!(a.kind, StatusKind::Modified);
         assert!(!a.staged);
-        let b = state.files.get(Path::new("b.txt")).expect("b.txt must be seen");
+        let b = state
+            .files
+            .get(Path::new("b.txt"))
+            .expect("b.txt must be seen");
         assert_eq!(b.kind, StatusKind::Untracked);
         assert_eq!((state.additions, state.deletions), (1, 0));
 

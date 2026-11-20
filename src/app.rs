@@ -678,14 +678,22 @@ mod tests {
         app.handle_event(key(KeyCode::Char('g')));
         assert_eq!(selected_path(&app), Some(PathBuf::from("src")));
         app.handle_event(key(KeyCode::Char('k')));
-        assert_eq!(selected_path(&app), Some(PathBuf::from("src")), "clamped at top");
+        assert_eq!(
+            selected_path(&app),
+            Some(PathBuf::from("src")),
+            "clamped at top"
+        );
 
         app.handle_event(key(KeyCode::Char('G')));
         assert_eq!(selected_path(&app), Some(PathBuf::from("a.txt")));
         for _ in 0..10 {
             app.handle_event(key(KeyCode::Char('j')));
         }
-        assert_eq!(selected_path(&app), Some(PathBuf::from("a.txt")), "clamped at bottom");
+        assert_eq!(
+            selected_path(&app),
+            Some(PathBuf::from("a.txt")),
+            "clamped at bottom"
+        );
     }
 
     #[test]
@@ -730,7 +738,16 @@ mod tests {
         git(&root, &["add", "a.txt"]);
         git(
             &root,
-            &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
         );
         std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
         git(&root, &["add", "a.txt"]);
@@ -770,7 +787,12 @@ mod tests {
         let mut app = app_for(&root);
         app.open_selected_diff().unwrap();
         assert!(!app.diff().unwrap().staged);
-        assert!(app.diff().unwrap().lines.iter().any(|l| l.text.contains("three")));
+        assert!(app
+            .diff()
+            .unwrap()
+            .lines
+            .iter()
+            .any(|l| l.text.contains("three")));
 
         app.handle_event(key(KeyCode::Char('s')));
         let view = app.diff().unwrap();
@@ -788,7 +810,11 @@ mod tests {
         assert!(view.lines.iter().any(|l| l.text.contains("three")));
 
         app.handle_event(key(KeyCode::Enter));
-        assert_eq!(app.focus(), Focus::Diff, "Enter in the diff pane keeps focus");
+        assert_eq!(
+            app.focus(),
+            Focus::Diff,
+            "Enter in the diff pane keeps focus"
+        );
         let (profile, path) = app
             .take_editor_request()
             .expect("Enter in the diff pane queues the editor");
@@ -916,9 +942,16 @@ mod tests {
         std::fs::write(root.join("b").join("e.txt"), "e\n").unwrap();
         app.refresh_git().unwrap();
 
-        assert_eq!(selected_path(&app), Some(PathBuf::from("b/d.txt")), "selection preserved");
+        assert_eq!(
+            selected_path(&app),
+            Some(PathBuf::from("b/d.txt")),
+            "selection preserved"
+        );
         let paths = row_paths(&app);
-        assert!(paths.contains(&"b/e.txt".to_string()), "new file picked up: {paths:?}");
+        assert!(
+            paths.contains(&"b/e.txt".to_string()),
+            "new file picked up: {paths:?}"
+        );
         let changed: Vec<_> = app
             .rows()
             .iter()
@@ -973,8 +1006,14 @@ mod tests {
             outside.clone(),
         ]));
 
-        assert!(app.is_recent(Path::new("a.txt")), "repo-relative path marked recent");
-        assert!(!app.is_recent(&outside), "paths outside the root are dropped");
+        assert!(
+            app.is_recent(Path::new("a.txt")),
+            "repo-relative path marked recent"
+        );
+        assert!(
+            !app.is_recent(&outside),
+            "paths outside the root are dropped"
+        );
         assert_eq!(app.status_message(), "updated");
         let row = app
             .rows()
@@ -1009,7 +1048,10 @@ mod tests {
         let (profile, path) = app.edit_target().expect("a file is selected");
         assert_eq!(profile.command, vec!["nvim", "+{line}", "{file}"]);
         assert_eq!(path, PathBuf::from("/repo/a.txt"));
-        assert!(app.take_editor_request().is_none(), "only the `e` key queues a launch");
+        assert!(
+            app.take_editor_request().is_none(),
+            "only the `e` key queues a launch"
+        );
 
         app.handle_event(key(KeyCode::Char('e')));
         let (profile, path) = app.take_editor_request().expect("`e` queues a launch");

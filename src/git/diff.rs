@@ -43,7 +43,13 @@ pub struct DiffView {
 /// Command choice: untracked files diff against `/dev/null` via
 /// `--no-index`; staged files use `--cached`; everything else diffs
 /// against `HEAD`, falling back to `--cached` when `HEAD` is missing.
-pub fn load(root: &Path, rel: &Path, staged: bool, max_bytes: usize, max_lines: usize) -> Result<DiffView> {
+pub fn load(
+    root: &Path,
+    rel: &Path,
+    staged: bool,
+    max_bytes: usize,
+    max_lines: usize,
+) -> Result<DiffView> {
     let rel_str = rel.to_string_lossy();
     let probe = run(root, &["ls-files", "--error-unmatch", "--", &rel_str])
         .with_context(|| format!("cannot probe `{}` in the index", rel.display()))?;
@@ -148,15 +154,9 @@ fn head_exists(root: &Path) -> Result<bool> {
 
 /// Load the file's current contents for a read-only preview. Binary files
 /// produce no lines; `binary` is set instead.
-pub fn load_file(
-    root: &Path,
-    rel: &Path,
-    max_bytes: usize,
-    max_lines: usize,
-) -> Result<DiffView> {
+pub fn load_file(root: &Path, rel: &Path, max_bytes: usize, max_lines: usize) -> Result<DiffView> {
     let path = root.join(rel);
-    let data =
-        std::fs::read(&path).with_context(|| format!("cannot read `{}`", path.display()))?;
+    let data = std::fs::read(&path).with_context(|| format!("cannot read `{}`", path.display()))?;
     let mut truncated = data.len() > max_bytes;
     let bytes = if truncated { &data[..max_bytes] } else { &data };
     let binary = bytes.contains(&0);
@@ -198,7 +198,9 @@ pub fn parse(text: &str, path: PathBuf, staged: bool, truncated: bool) -> DiffVi
     let mut old_no = 0u32;
     let mut new_no = 0u32;
     for raw in text.lines() {
-        if (raw.starts_with("Binary files ") && raw.ends_with(" differ")) || raw == "GIT binary patch" {
+        if (raw.starts_with("Binary files ") && raw.ends_with(" differ"))
+            || raw == "GIT binary patch"
+        {
             binary = true;
             lines.push(DiffLine {
                 kind: DiffLineKind::Meta,
@@ -476,7 +478,16 @@ mod tests {
         git(root, &["add", "a.txt"]);
         git(
             root,
-            &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "init"],
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
         );
         std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::write(root.join("u.txt"), "untracked\n").unwrap();

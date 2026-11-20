@@ -404,13 +404,32 @@ mod tests {
         let tree = build(sample_paths(), &statuses);
 
         let src = &tree.rows()[tree.find_row(Path::new("src")).unwrap()];
-        assert_eq!(src.counts, Counts { changed: 2, added: 1, deleted: 1, untracked: 1 });
+        assert_eq!(
+            src.counts,
+            Counts {
+                changed: 2,
+                added: 1,
+                deleted: 1,
+                untracked: 1
+            }
+        );
         assert!(src.has_changed_descendant);
         assert_eq!(src.status, None);
 
         let a = &tree.rows()[tree.find_row(Path::new("a.txt")).unwrap()];
-        assert_eq!(a.counts, Counts { changed: 1, added: 0, deleted: 0, untracked: 0 });
-        assert!(a.has_changed_descendant, "file with a status counts as changed");
+        assert_eq!(
+            a.counts,
+            Counts {
+                changed: 1,
+                added: 0,
+                deleted: 0,
+                untracked: 0
+            }
+        );
+        assert!(
+            a.has_changed_descendant,
+            "file with a status counts as changed"
+        );
         assert_eq!(a.status.as_ref().unwrap().kind, StatusKind::Modified);
 
         let b = &tree.rows()[tree.find_row(Path::new("B.txt")).unwrap()];
@@ -420,7 +439,12 @@ mod tests {
         let lib = &tree.rows()[tree.find_row(Path::new("src/lib.rs")).unwrap()];
         assert_eq!(
             lib.counts,
-            Counts { changed: 1, added: 0, deleted: 1, untracked: 0 }
+            Counts {
+                changed: 1,
+                added: 0,
+                deleted: 1,
+                untracked: 0
+            }
         );
     }
 
@@ -475,10 +499,7 @@ mod tests {
         );
 
         tree.collapse_to(Path::new("src"));
-        assert_eq!(
-            row_paths(&tree),
-            vec!["docs", "src", "src/util", "a.txt"]
-        );
+        assert_eq!(row_paths(&tree), vec!["docs", "src", "src/util", "a.txt"]);
     }
 
     #[test]
@@ -488,7 +509,9 @@ mod tests {
         assert!(tree.toggle_collapse(src_row));
 
         let statuses: BTreeMap<PathBuf, FileStatus> =
-            [status("src/util/helper.rs", StatusKind::Added, 'A', '.')].into_iter().collect();
+            [status("src/util/helper.rs", StatusKind::Added, 'A', '.')]
+                .into_iter()
+                .collect();
         tree.update_statuses(&statuses);
 
         let paths = row_paths(&tree);
@@ -496,13 +519,29 @@ mod tests {
         assert!(!paths.contains(&"src/util".to_string()));
 
         let src = &tree.rows()[tree.find_row(Path::new("src")).unwrap()];
-        assert_eq!(src.counts, Counts { changed: 1, added: 1, deleted: 0, untracked: 0 });
+        assert_eq!(
+            src.counts,
+            Counts {
+                changed: 1,
+                added: 1,
+                deleted: 0,
+                untracked: 0
+            }
+        );
         assert!(src.has_changed_descendant);
 
         tree.expand_all();
         let helper = &tree.rows()[tree.find_row(Path::new("src/util/helper.rs")).unwrap()];
         assert_eq!(helper.status.as_ref().unwrap().kind, StatusKind::Added);
-        assert_eq!(helper.counts, Counts { changed: 1, added: 1, deleted: 0, untracked: 0 });
+        assert_eq!(
+            helper.counts,
+            Counts {
+                changed: 1,
+                added: 1,
+                deleted: 0,
+                untracked: 0
+            }
+        );
         assert!(helper.has_changed_descendant);
     }
 }

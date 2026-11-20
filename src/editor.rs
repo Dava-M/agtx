@@ -20,9 +20,7 @@ pub fn substitute(args: &[String], file: &Path, line: Option<u32>) -> Vec<String
 /// with a non-zero status.
 pub fn launch(root: &Path, profile: &EditorProfile, file: &Path, line: Option<u32>) -> Result<()> {
     let args = substitute(&profile.command, file, line);
-    let (program, rest) = args
-        .split_first()
-        .context("editor command is empty")?;
+    let (program, rest) = args.split_first().context("editor command is empty")?;
     let status = Command::new(program)
         .args(rest)
         .current_dir(root)

@@ -3,9 +3,9 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+pub mod diff;
 pub mod files;
 pub mod status;
-pub mod diff;
 
 /// Resolve the repository root containing `start`.
 pub fn repo_root(start: &Path) -> Result<PathBuf> {

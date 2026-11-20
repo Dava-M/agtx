@@ -113,11 +113,7 @@ fn run(
                         break;
                     }
                 }
-                Event::Resize(_, _) => {
-                    if tx.send(AppEvent::Resize).is_err() {
-                        break;
-                    }
-                }
+                Event::Resize(_, _) if tx.send(AppEvent::Resize).is_err() => break,
                 _ => {}
             }
         }

@@ -5,7 +5,8 @@ use ratatui::Frame;
 
 use crate::app::App;
 
-const HINTS: &str = "j/k·Enter diff·S-Enter/p file·- fold·f changed·s staged·r refresh·e edit·q quit";
+const HINTS: &str =
+    "j/k·Enter diff·S-Enter/p file·- fold·f changed·s staged·r refresh·e edit·q quit";
 
 /// Bottom two lines: summary with change counts, then key hints.
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -28,15 +29,17 @@ fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
     if !status.is_empty() {
         left.push_str(&format!(" | {status}"));
     }
-    let right = format!("{} files · +{} −{}", git.files.len(), git.additions, git.deletions);
+    let right = format!(
+        "{} files · +{} −{}",
+        git.files.len(),
+        git.additions,
+        git.deletions
+    );
     let chunks = Layout::horizontal([
         Constraint::Min(0),
         Constraint::Length(right.chars().count() as u16),
     ])
     .split(area);
     frame.render_widget(Paragraph::new(left), chunks[0]);
-    frame.render_widget(
-        Paragraph::new(right).alignment(Alignment::Right),
-        chunks[1],
-    );
+    frame.render_widget(Paragraph::new(right).alignment(Alignment::Right), chunks[1]);
 }
