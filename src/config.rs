@@ -87,13 +87,17 @@ fn builtin_profiles() -> HashMap<String, EditorProfile> {
 }
 
 /// `$XDG_CONFIG_HOME/agtx/config.toml`, else `$HOME/.config/agtx/config.toml`.
+/// On Windows, where `HOME` is often unset, `USERPROFILE` is used instead.
 pub fn default_path() -> Result<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         if !xdg.is_empty() {
             return Ok(PathBuf::from(xdg).join("agtx").join("config.toml"));
         }
     }
-    let home = std::env::var_os("HOME").context("neither XDG_CONFIG_HOME nor HOME is set")?;
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()))
+        .context("neither XDG_CONFIG_HOME, HOME, nor USERPROFILE is set")?;
     Ok(PathBuf::from(home)
         .join(".config")
         .join("agtx")

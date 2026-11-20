@@ -39,7 +39,8 @@ Config path, in order of precedence:
 
 1. `--config <path>` (must exist; a missing explicit path is an error),
 2. `$XDG_CONFIG_HOME/agtx/config.toml`,
-3. `$HOME/.config/agtx/config.toml`.
+3. `$HOME/.config/agtx/config.toml` (`%USERPROFILE%\.config\agtx\config.toml`
+   on Windows, where `HOME` is usually unset).
 
 When the default file is absent, the built-in defaults below are used.
 

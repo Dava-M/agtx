@@ -31,3 +31,15 @@ jobs:
 
       - name: Build release
         run: cargo build --release
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
